@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install fastapi uvicorn
+RUN pip install fastapi uvicorn python-jose[cryptography]
 
 COPY . .
 
