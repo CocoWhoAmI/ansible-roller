@@ -1,0 +1,17 @@
+---
+- name: Install nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+  become: true
+
+- name: Ensure nginx is running
+  shell: nginx
+  become: true
+
+- name: Create simple index page
+  copy:
+    dest: /var/www/html/index.html
+    content: "Hello from Ansible Roller\n"
+  become: true

@@ -2,7 +2,7 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y openssh-client \
+RUN apt-get update && apt-get install -y openssh-client ansible\
     && pip install fastapi uvicorn python-jose[cryptography]
 
 COPY . .

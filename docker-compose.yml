@@ -7,6 +7,8 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - API_USERNAME=${API_USERNAME}
       - API_PASSWORD=${API_PASSWORD}
+    volumes:
+      - ./ansible:/ansible
 
   target1:
     build: ./targets
