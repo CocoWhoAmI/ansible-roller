@@ -2,7 +2,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install fastapi uvicorn python-jose[cryptography]
+RUN apt-get update && apt-get install -y openssh-client \
+    && pip install fastapi uvicorn python-jose[cryptography]
 
 COPY . .
 

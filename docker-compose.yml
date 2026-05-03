@@ -7,3 +7,9 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - API_USERNAME=${API_USERNAME}
       - API_PASSWORD=${API_PASSWORD}
+
+  target1:
+    build: ./targets
+
+  target2:
+    build: ./targets
