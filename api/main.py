@@ -45,14 +45,75 @@ DATABASE_URL = (
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
 fernet = Fernet(ENCRYPTION_KEY.encode())
 
+
 def encrypt_secret(value: str) -> str:
     return fernet.encrypt(value.encode()).decode()
+
 
 def decrypt_secret(value: str) -> str:
     return fernet.decrypt(value.encode()).decode()
 
+
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL)
+
+
+def create_access_token(username: str) -> str:
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
+
+    payload = {
+        "sub": username,
+        "exp": expires_at,
+    }
+
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return token
+
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username = payload.get("sub")
+
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        return username
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+def get_target_by_name(target_name: str):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, host, username, password
+                FROM targets
+                WHERE name = %s;
+                """,
+                (target_name,),
+            )
+            return cur.fetchone()
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class RunRequest(BaseModel):
+    target_name: str
+    role_name: str
+
+class TargetRequest(BaseModel):
+    name: str
+    host: str
+    username: str
+    password: str
+
 
 @app.on_event("startup")
 def init_db():
@@ -70,45 +131,6 @@ def init_db():
             )
             conn.commit()
 
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class RunRequest(BaseModel):
-    target_name: str
-    role_name: str
-
-class TargetRequest(BaseModel):
-    name: str
-    host: str
-    username: str
-    password: str
-
-def create_access_token(username: str) -> str:
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
-
-    payload = {
-        "sub": username,
-        "exp": expires_at,
-    }
-
-    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
-    return token
-
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    token = credentials.credentials
-
-    try:
-        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
-        username = payload.get("sub")
-
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-
-        return username
-
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 @app.get("/")
 def root():
@@ -134,9 +156,13 @@ def run_ansible(request: RunRequest, username: str = Depends(verify_token)):
     if not role_path.exists():
         raise HTTPException(status_code=404, detail=f"Role '{request.role_name}' not found")
 
-    # Targets will be fetched dynamically after Postgres is implemented
-    if request.target_name not in ["target1", "target2"]:
+    target = get_target_by_name(request.target_name)
+
+    if target is None:
         raise HTTPException(status_code=404, detail=f"Target '{request.target_name}' not found")
+
+    target_name, target_host, target_username, encrypted_password = target
+    target_password = decrypt_secret(encrypted_password)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -146,9 +172,9 @@ def run_ansible(request: RunRequest, username: str = Depends(verify_token)):
 
         inventory_file.write_text(
             f"""[target]
-{request.target_name} ansible_host={request.target_name} ansible_user=ansible ansible_password=ansible ansible_python_interpreter=/usr/bin/python3
+    {target_name} ansible_host={target_host} ansible_user={target_username} ansible_password={target_password}
 """
-        )
+            )
 
         playbook_file.write_text(
             f"""---

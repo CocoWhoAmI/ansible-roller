@@ -26,10 +26,18 @@ services:
       - postgres_data:/var/lib/postgresql/data
 
   target1:
-    build: ./targets
+    build:
+      context: ./targets
+      args:
+        TARGET_USER: ${TARGET_USER}
+        TARGET_PASSWORD: ${TARGET_PASSWORD}
 
   target2:
-    build: ./targets
+    build:
+      context: ./targets
+      args:
+        TARGET_USER: ${TARGET_USER}
+        TARGET_PASSWORD: ${TARGET_PASSWORD}
 
 volumes:
   postgres_data:

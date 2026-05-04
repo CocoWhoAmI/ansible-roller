@@ -1,11 +1,15 @@
 FROM ubuntu:22.04
 
+ARG TARGET_USER
+ARG TARGET_PASSWORD
+
 RUN apt-get update && apt-get install -y openssh-server python3 sudo
 
-RUN useradd -m -s /bin/bash ansible \
-    && echo "ansible:ansible" | chpasswd \
-    && usermod -aG sudo ansible \
-    && echo "ansible ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ansible
+RUN test -n "$TARGET_USER" && test -n "$TARGET_PASSWORD" \
+    && useradd -m -s /bin/bash "$TARGET_USER" \
+    && echo "$TARGET_USER:$TARGET_PASSWORD" | chpasswd \
+    && usermod -aG sudo "$TARGET_USER" \
+    && echo "$TARGET_USER ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$TARGET_USER"
 
 RUN mkdir /run/sshd
 
