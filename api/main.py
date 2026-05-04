@@ -16,6 +16,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel
 
+import psycopg2
+from cryptography.fernet import Fernet
+
 app = FastAPI()
 security = HTTPBearer()
 
@@ -23,11 +26,49 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = 60
 
-DEMO_USERNAME = os.getenv("API_USERNAME")
-DEMO_PASSWORD = os.getenv("API_PASSWORD")
+API_USERNAME = os.getenv("API_USERNAME")
+API_PASSWORD = os.getenv("API_PASSWORD")
 
 ANSIBLE_ROOT = Path("/ansible")
 ROLES_DIR = ANSIBLE_ROOT / "roles"
+
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
+POSTGRES_DB = os.getenv("POSTGRES_DB")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT")
+
+DATABASE_URL = (
+    f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+)
+
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY")
+fernet = Fernet(ENCRYPTION_KEY.encode())
+
+def encrypt_secret(value: str) -> str:
+    return fernet.encrypt(value.encode()).decode()
+
+def decrypt_secret(value: str) -> str:
+    return fernet.decrypt(value.encode()).decode()
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
+
+@app.on_event("startup")
+def init_db():
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS targets (
+                    name TEXT PRIMARY KEY,
+                    host TEXT NOT NULL,
+                    username TEXT NOT NULL,
+                    password TEXT NOT NULL
+                );
+                """
+            )
+            conn.commit()
 
 class LoginRequest(BaseModel):
     username: str
@@ -36,6 +77,12 @@ class LoginRequest(BaseModel):
 class RunRequest(BaseModel):
     target_name: str
     role_name: str
+
+class TargetRequest(BaseModel):
+    name: str
+    host: str
+    username: str
+    password: str
 
 def create_access_token(username: str) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
@@ -70,7 +117,7 @@ def root():
 
 @app.post("/login")
 def login(request: LoginRequest):
-    if request.username != DEMO_USERNAME or request.password != DEMO_PASSWORD:
+    if request.username != API_USERNAME or request.password != API_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid username or password")
 
     token = create_access_token(request.username)
@@ -136,3 +183,72 @@ def run_ansible(request: RunRequest, username: str = Depends(verify_token)):
         "stdout": result.stdout,
         "stderr": result.stderr,
     }
+
+
+@app.put("/targets")
+def upsert_target(request: TargetRequest, username: str = Depends(verify_token)):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            encrypted_password = encrypt_secret(request.password)
+            cur.execute(
+                """
+                INSERT INTO targets (name, host, username, password)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (name)
+                DO UPDATE SET
+                    host = EXCLUDED.host,
+                    username = EXCLUDED.username,
+                    password = EXCLUDED.password;
+                """,
+                (
+                    request.name,
+                    request.host,
+                    request.username,
+                    encrypted_password,
+                ),
+            )
+            conn.commit()
+
+    return {"message": f"Target '{request.name}' saved"}
+
+
+@app.get("/targets")
+def list_targets(username: str = Depends(verify_token)):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, host, username
+                FROM targets
+                ORDER BY name;
+                """
+            )
+            rows = cur.fetchall()
+
+    return {
+        "targets": [
+            {
+                "name": row[0],
+                "host": row[1],
+                "username": row[2],
+            }
+            for row in rows
+        ]
+    }
+
+
+@app.delete("/targets/{target_name}")
+def delete_target(target_name: str, username: str = Depends(verify_token)):
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM targets WHERE name = %s;",
+                (target_name,),
+            )
+            deleted = cur.rowcount
+            conn.commit()
+
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=f"Target '{target_name}' not found")
+
+    return {"message": f"Target '{target_name}' deleted"}
